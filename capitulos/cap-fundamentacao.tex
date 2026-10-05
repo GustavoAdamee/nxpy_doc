@@ -1,0 +1,130 @@
+%%%% CAPÍTULO 2 - FUNDAMENTAÇÃO TEÓRICA
+
+\chapter{Fundamentação Teórica}\label{cap:fundamentacao}
+
+Este capítulo reúne os conceitos e os mecanismos técnicos que fundamentam a interoperabilidade desenvolvida entre \gls{Nx} e Python. As duas primeiras seções tratam dos ecossistemas envolvidos: Python, no contexto da computação numérica e do aprendizado de máquina, e Erlang/Elixir, quanto às propriedades que favorecem sistemas concorrentes e tolerantes a falhas. A \autoref{sec:numerical-elixir} apresenta o Numerical Elixir e o conceito de \textit{backend}, central para este trabalho. As seções seguintes descrevem os mecanismos de integração da \gls{BEAM} com código externo, o modelo de incorporação do CPython, a biblioteca Pythonx e o \textit{backend} \gls{EXLA}. Por fim, discutem-se os pontos em que ocorrem cópias de memória e os requisitos de segurança envolvidos no compartilhamento direto de dados entre os dois ambientes.
+
+\section{Computação Numérica e Aprendizado de Máquina}\label{sec:computacao-numerica}
+
+Python é amplamente adotado em aplicações científicas e industriais de computação numérica e aprendizado de máquina (\gls{ML}). Essa adoção se apoia em bibliotecas consolidadas para álgebra linear, cálculo numérico e otimização, que servem de base para \textit{pipelines} de treinamento, inferência e experimentação. Como essas bibliotecas já implementam operações fundamentais e oferecem interfaces comuns para combiná-las, reduz-se o esforço de desenvolvimento e facilita-se a reprodução de resultados \citep{harris2020}.
+
+Nesse ecossistema, o NumPy fornece a estrutura \textit{ndarray}, um arranjo multidimensional homogêneo cujos elementos compartilham um mesmo tipo numérico. Os dados são armazenados em um \textit{buffer} de memória, enquanto metadados descrevem dimensões, tipo e disposição dos elementos. Bibliotecas de aprendizado de máquina adotam abstrações semelhantes, usualmente denominadas tensores, e acrescentam recursos como execução em aceleradores e diferenciação automática. Essa separação entre dados e metadados é importante para a interoperabilidade: dois ambientes podem construir representações distintas sobre uma mesma região de memória, desde que concordem quanto ao tipo, às dimensões e à disposição dos elementos.
+
+\section{Ecossistema Erlang/Elixir e BEAM VM}\label{sec:ecossistema-erlang-elixir}
+
+O ecossistema Erlang/Elixir é voltado a aplicações que exigem concorrência, isolamento e tolerância a falhas \citep{armstrong2010}. Essas propriedades decorrem do modelo de execução da \gls{BEAM}, baseado em processos leves: unidades de execução isoladas e escalonadas pela própria máquina virtual sobre as \textit{threads} do sistema operacional. No modelo de programação, esses processos não compartilham estado mutável e se comunicam por troca de mensagens, de modo que a falha de um deles não corrompe diretamente o estado dos demais. Sobre esse modelo é construído o \gls{OTP}, conjunto de bibliotecas e padrões que estrutura aplicações da plataforma e oferece abstrações para supervisionar processos e reiniciá-los automaticamente quando falham.
+
+O Elixir \citep{elixir2024} é uma linguagem funcional criada por José Valim que compila para o mesmo \textit{bytecode} executado pela \gls{BEAM}. A consequência prática é que código Elixir e código Erlang convivem no mesmo projeto: bibliotecas Erlang consolidadas podem ser chamadas diretamente, sem camada de adaptação, e o Elixir herda tanto o modelo de concorrência quanto o ecossistema acumulado em décadas de uso do Erlang em sistemas de telecomunicações.
+
+Dois recursos da linguagem são especialmente relevantes para a biblioteca desenvolvida. O primeiro são os \textit{protocolos}, mecanismo de polimorfismo do Elixir. Um protocolo declara um conjunto de funções, e cada tipo de dado fornece a sua própria implementação. Quem define o protocolo não precisa conhecer antecipadamente os tipos que irão implementá-lo, e uma biblioteca pode implementar um protocolo de terceiros para um tipo de terceiros, sem modificar nenhum dos dois. O \autoref{cap:desenvolvimento} mostra como esse mecanismo é usado para integrar tensores \gls{Nx} ao Pythonx. O segundo recurso é o sistema de macros, que permite transformar código em tempo de compilação e serve de base ao módulo \textit{Nx.Defn}, apresentado na próxima seção.
+
+Quando o domínio do problema depende intensamente de computação numérica, porém, a integração com bibliotecas externas se torna relevante para cobrir lacunas de maturidade do ecossistema.
+
+\section{Numerical Elixir (Nx)}\label{sec:numerical-elixir}
+
+O projeto Numerical Elixir, por meio da biblioteca \gls{Nx} \citep{nx2024}, estabelece a base para computação numérica no ecossistema Elixir. Quanto à representação de dados, seu papel é análogo ao do NumPy \citep{harris2020} no ecossistema Python. No caso de funções definidas com \texttt{Nx.Defn} e compiladas pelo \gls{EXLA}, o modelo de execução se aproxima do JAX \citep{jax2024}: nos dois casos, as operações numéricas são traçadas, transformadas em uma representação intermediária e compiladas por meio da infraestrutura \gls{XLA} \citep{xla2024}. O elemento central do \gls{Nx} é o tensor, estrutura que representa um \textit{array} multidimensional de números. Cada tensor é descrito por um tipo numérico, como inteiro de 32 \textit{bits} ou ponto flutuante de 64 \textit{bits}, e por uma forma (\textit{shape}), que informa o tamanho de cada dimensão. O tensor é também o principal ponto de integração deste trabalho: a interoperabilidade desenvolvida permite que dados produzidos em Python sejam manipulados como tensores \gls{Nx}, preservando as dimensões e, quando há representação equivalente, o tipo numérico. As exceções que exigem conversão de tipo são discutidas na \autoref{sec:conversao-dados}.
+
+Além da representação de tensores, o \gls{Nx} disponibiliza o módulo \texttt{Nx.Defn}, que permite escrever funções numéricas com sintaxe próxima da matemática. O desenvolvedor descreve \textit{o que} deve ser calculado, enquanto o compilador selecionado define \textit{como} executar o grafo resultante, seja por avaliação direta, seja por compilação especializada, como ocorre com o \gls{EXLA}.
+
+Algumas situações exigem executar, no interior de uma computação numérica, uma função Elixir que não pode ser expressa com as operações de \texttt{Nx.Defn}, como uma chamada a uma biblioteca externa. Para esses casos, o \gls{Nx} oferece \texttt{Nx.runtime\_call/4}. Essa função recebe, além dos dados de entrada e da função a ser chamada, um modelo que declara previamente os tipos e as dimensões esperados na saída. Durante a execução, a chamada externa é incorporada ao fluxo e seu resultado é validado contra esse modelo. O mecanismo foi explorado nos resultados preliminares deste trabalho para integrar o fluxo numérico do \gls{Nx} à execução de rotinas Python.
+
+A forma como um tensor armazena e processa seus dados é determinada pelo \textit{backend} a ele associado. Essa escolha pode ocorrer na criação do tensor ou posteriormente, por meio de operações de cópia ou transferência entre \textit{backends}. O \textit{backend} implementa as operações numéricas e decide onde e como os dados são mantidos em memória. A separação entre a \gls{API} do \gls{Nx} e sua implementação permite trocar a estratégia de armazenamento e execução sem alterar o código que manipula os tensores, de forma semelhante à substituição do \textit{driver} de um banco de dados sem reescrever as consultas da aplicação.
+
+O \textit{backend} de referência do \gls{Nx}, \texttt{Nx.BinaryBackend}, é o mais simples dos disponíveis. Ele armazena os dados do tensor como um binário Erlang, isto é, uma sequência de \textit{bits} mantida na memória gerenciada pela \gls{BEAM}. Por ser implementado inteiramente em Elixir, sem depender de bibliotecas nativas ou de \textit{runtimes} externos, converte tensores de e para binário de forma direta, por meio de \texttt{Nx.to\_binary/2} e \texttt{Nx.from\_binary/2}. Essa simplicidade o torna um alvo natural para estratégias de interoperabilidade baseadas em cópia: o conteúdo pode ser apresentado como um \textit{buffer} binário e convertido para a representação adotada pelo ambiente de destino.
+
+\textit{Backends} como o \gls{EXLA}, discutido na \autoref{sec:exla-memoria}, não mantêm os dados no \textit{heap} gerenciado pela \gls{BEAM}. Eles alocam uma região de memória própria, gerenciada por um \textit{runtime} externo especializado em computação numérica. Isso amplia as possibilidades de integração de baixo nível, como acessar o endereço de memória do tensor sem copiá-lo. Em contrapartida, introduz duas questões retomadas nas próximas seções: quando essa memória pode ser liberada e como acessá-la com segurança a partir de outro ambiente.
+
+\section{Interoperabilidade na BEAM VM}\label{sec:interoperabilidade-beam}
+
+A interoperabilidade entre aplicações Elixir/Erlang e linguagens externas pode ser implementada por diferentes mecanismos, que variam em \textit{overhead}, isolamento e complexidade \citep{erlang2024}. Em abordagens baseadas em processos externos, denominadas \textit{Ports}, a \gls{BEAM} inicia um programa separado e troca mensagens serializadas com ele por meio de entrada e saída padrão ou de \textit{socket}. O isolamento é alto, pois uma falha no processo externo não compromete a \gls{VM}, mas a serialização e a comunicação entre processos do sistema operacional aumentam a latência.
+
+Os \textit{Erlang Drivers} (\textit{linked-in drivers}) ocupam uma posição intermediária. São carregados como bibliotecas dinâmicas dentro do processo da \gls{BEAM}, assim como as \glspl{NIF}, mas utilizam uma interface orientada a eventos e a \textit{callbacks}, adequada a operações de entrada e saída. O \textit{overhead} de comunicação é menor que o dos \textit{Ports}, porém a interface de programação é mais elaborada que a de uma \gls{NIF}, o que restringe seu uso a cenários específicos, como \textit{drivers} de dispositivos e protocolos de rede.
+
+Integrações nativas de baixa latência no ecossistema \gls{BEAM} são tradicionalmente viabilizadas por \glspl{NIF} (\textit{Native Implemented Functions}) \citep{erlnif2024}. Nesse modelo, funções nativas são expostas por uma interface em C e carregadas pela \gls{VM} como bibliotecas dinâmicas, podendo ser chamadas a partir de código Elixir/Erlang. Em comparação com \textit{Ports} e \textit{Drivers}, as \glspl{NIF} oferecem uma interface direta e baixo \textit{overhead} de chamada, pois executam no mesmo processo do sistema operacional que a \gls{VM} e dispensam a serialização necessária à comunicação com um processo externo. O custo dessa vantagem é o menor isolamento: falhas no código nativo podem encerrar toda a \gls{VM}, e uma chamada prolongada executada em um escalonador normal pode impedir o progresso de outros processos. A \gls{BEAM} oferece escalonadores dedicados a trabalhos nativos prolongados, denominados \textit{dirty schedulers}, mas seu uso precisa ser declarado pela própria \gls{NIF}.
+
+O \autoref{quad:nif-port-driver} resume as diferenças entre os três mecanismos discutidos, em termos de \textit{overhead} de comunicação, isolamento de falhas e complexidade de implementação.
+
+\begin{tabframed}[htb]
+\caption{Comparação entre Ports, Drivers e NIFs na BEAM VM}
+\label{quad:nif-port-driver}
+\renewcommand{\arraystretch}{1.5}
+\begin{tabular}{|l|p{4cm}|p{3cm}|p{4cm}|}
+\cline{1-4}
+\multicolumn{1}{|c|}{\textbf{Mecanismo}} & \multicolumn{1}{c|}{\textbf{\textit{Overhead}}} & \multicolumn{1}{c|}{\textbf{Isolamento}} & \multicolumn{1}{c|}{\textbf{Complexidade}} \\ \cline{1-4}
+Port & Alto (serialização e comunicação entre processos do sistema operacional) & Alto (processo externo; falhas não afetam diretamente a \gls{VM}) & Média (exige programa externo e protocolo de mensagens via \textit{stdio}/\textit{socket}) \\ \cline{1-4}
+Driver (\textit{linked-in}) & Médio (interface interna orientada a eventos) & Baixo (mesmo processo da \gls{VM}) & Alta (API baseada em \textit{callbacks}) \\ \cline{1-4}
+NIF & Baixo (chamada direta, sem processo externo) & Baixo (falhas podem encerrar a \gls{VM}) & Média (API direta, mas exige cuidados de segurança e escalonamento) \\ \cline{1-4}
+\end{tabular}
+\fonte{Elaborado pelo autor com base em \citeonline{erlang2024}}
+\addcontentsline{loge}{tabframed}{\protect\numberline{\thetabframed}Comparação entre Ports, Drivers e NIFs na BEAM VM}
+\end{tabframed}
+
+Neste trabalho, a integração com o ecossistema Python se apoia no fato de a implementação CPython expor uma interface nativa em C para controlar o interpretador e manipular objetos Python. Uma \gls{NIF} pode então atuar como camada de ponte, executando rotinas Python e convertendo dados entre os ambientes, combinando o baixo \textit{overhead} das \glspl{NIF} com o acesso direto à \gls{API} nativa do CPython. A próxima seção apresenta os fundamentos do CPython relevantes para esse modelo.
+
+\section{CPython e a Python/C API}\label{sec:cpython}
+
+Python possui diferentes implementações, sendo o CPython \citep{python2024} a mais utilizada. O CPython compila o código-fonte Python para \textit{bytecode}, que é então executado pelo interpretador. Esse detalhe caracteriza seu modelo interno de execução, mas não constitui, por si só, um mecanismo de interoperabilidade.
+
+O aspecto central para a interoperabilidade é a Python/C \gls{API}, um conjunto de funções, macros e tipos definido em C e acessível também a partir de C++. Essa interface pode ser utilizada tanto para estender o interpretador com módulos nativos quanto para incorporá-lo a uma aplicação externa (\textit{embedding}). Nesse segundo modelo, a aplicação hospedeira inicializa e controla o interpretador, podendo executar trechos de código, importar módulos e manipular objetos Python diretamente pela \gls{API}.
+
+Esse modelo é particularmente compatível com \glspl{NIF}, que também são componentes nativos carregados dinamicamente no processo da \gls{VM}. Uma \gls{NIF} pode inicializar e controlar o interpretador CPython e, a partir disso, executar rotinas Python e converter dados entre os dois ambientes. É sobre essa combinação que se apoia a biblioteca Pythonx, apresentada a seguir.
+
+\section{Pythonx}\label{sec:pythonx}
+
+A biblioteca Pythonx \citep{pythonx2024} executa código Python a partir de aplicações Elixir ao incorporar o interpretador CPython ao mesmo processo do sistema operacional em que é executada a \gls{BEAM}. Ela disponibiliza uma \gls{API} para avaliar expressões, importar módulos e invocar funções Python diretamente a partir de código Elixir. Como não é necessário manter um processo externo nem estabelecer um protocolo de troca de mensagens, reduz-se o \textit{overhead} de comunicação e torna-se possível compartilhar endereços de memória válidos no processo hospedeiro.
+
+Esse modelo impõe três considerações em cenários numéricos. A primeira é o \gls{GIL}, mecanismo do CPython que, na distribuição padrão, permite que apenas uma \textit{thread} execute \textit{bytecode} Python por vez \citep{gil2024}. Como o Pythonx mantém um interpretador compartilhado, chamadas iniciadas simultaneamente por processos distintos da \gls{BEAM} disputam o \gls{GIL} e têm sua execução de código Python serializada. Bibliotecas nativas podem liberar o bloqueio durante operações específicas, mas esse comportamento depende de cada biblioteca. Desde a versão 3.13, o CPython disponibiliza, em caráter experimental, uma compilação alternativa com suporte à execução sem o \gls{GIL} (\textit{free-threaded build}) \citep{pep703}. Na versão 3.14, essa compilação deixou de ser experimental e passou a ser oficialmente suportada, embora permaneça opcional e não corresponda à configuração padrão \citep{pep779}. Este trabalho utiliza a compilação padrão do CPython, na qual o \gls{GIL} permanece habilitado.
+
+A segunda consideração decorre do compartilhamento do processo do sistema operacional. O Pythonx agenda suas operações nativas em \textit{dirty schedulers}, evitando que uma avaliação prolongada ocupe um escalonador normal da \gls{BEAM}. Ainda assim, as chamadas concorrem pelo conjunto finito desses escalonadores e uma falha no código nativo pode comprometer toda a máquina virtual. A terceira consideração é o custo de conversão dos dados, que pode se tornar dominante quando tensores e \textit{arrays} volumosos atravessam a fronteira entre os dois ambientes. A viabilidade prática depende, portanto, de conversões eficientes e da redução de cópias de memória, tema das próximas seções.
+
+\section{EXLA: Acesso Direto à Memória}\label{sec:exla-memoria}
+
+O \gls{EXLA} \citep{exla2024} é o \textit{backend} do \gls{Nx} baseado na \gls{XLA} \citep{xla2024}, voltado à compilação e à execução eficiente de computações numéricas. Enquanto o \texttt{Nx.BinaryBackend} mantém os dados como um binário Erlang, um tensor \gls{EXLA} é representado por um \textit{DeviceBuffer}, isto é, uma região de memória alocada em um dispositivo específico e gerenciada pelo ambiente de execução da \gls{XLA}. O \gls{EXLA} oferece diferentes clientes de execução, entre eles o cliente \texttt{:host}, que utiliza memória endereçável pelo processo hospedeiro, e clientes destinados a aceleradores. Este trabalho utiliza o cliente \texttt{:host}, pois a biblioteca \texttt{ctypes} precisa receber um endereço de memória acessível pela unidade central de processamento.
+
+Para viabilizar esse acesso, o \gls{Nx} disponibiliza \texttt{Nx.to\_pointer/2}, que representa o endereço do \textit{buffer} por meio de uma estrutura \texttt{Nx.Pointer}, e \texttt{Nx.from\_pointer/4}, que constrói um tensor a partir dessa estrutura. Com a opção \texttt{mode: :local}, o campo \texttt{address} corresponde a um endereço válido no processo do sistema operacional, e o campo \texttt{data\_size} informa o tamanho, em \textit{bytes}, da região referenciada. O endereço pode ser repassado a uma rotina executada pelo Pythonx e interpretado por meio da biblioteca \texttt{ctypes} \citep{ctypes2024}. A partir dele, o NumPy cria uma visão da mesma região de memória do \textit{DeviceBuffer}, sem copiar seu conteúdo. O \autoref{code:nx-to-pointer} ilustra a obtenção do ponteiro, e a \autoref{sec:conversao-dados} detalha sua utilização.
+
+\begin{sourcecode}[htb]
+\caption{Obtenção de um ponteiro de memória para um tensor EXLA}
+\label{code:nx-to-pointer}
+\codigofonte{Elixir}{nx_to_pointer.exs}
+\fonte{O autor}
+\end{sourcecode}
+
+O modo \texttt{:local} pressupõe que o consumidor do ponteiro compartilhe o mesmo espaço de endereçamento do processo que o gerou. Neste trabalho, essa condição é satisfeita porque o Pythonx incorpora o interpretador CPython ao processo da \gls{BEAM}. O endereço, contudo, não transfere a propriedade da memória nem prolonga sua validade. O tensor que possui o \textit{DeviceBuffer} deve permanecer alcançável enquanto Python mantiver uma visão sobre a região; caso contrário, a coleta do tensor pode liberar a memória e deixar um ponteiro inválido. De modo análogo, um tensor criado com \texttt{Nx.from\_pointer/4} não passa a controlar automaticamente o tempo de vida da alocação original.
+
+Para cenários em que o consumidor está em outro processo, o \gls{EXLA} também disponibiliza o modo \texttt{:ipc} (\gls{IPC}). No cliente \texttt{:host}, sua implementação cria uma região de memória compartilhada POSIX por meio de \texttt{shm\_open} e \texttt{mmap} e copia para ela o conteúdo do \textit{DeviceBuffer}. Portanto, a exportação inicial não é livre de cópia, embora os processos possam, depois disso, acessar a região compartilhada. Esse modo não é utilizado neste trabalho, mas constitui uma alternativa para arquiteturas que isolem o interpretador Python em um processo dedicado.
+
+\section{Conversão de Dados e Cópia de Memória}\label{sec:conversao-dados}
+
+Em interoperabilidade numérica, o desempenho da integração depende, em grande parte, do custo de conversão e movimentação de dados entre ambientes de execução. No fluxo baseado em binário, o tensor \gls{Nx} é apresentado como uma sequência contígua de dados no lado Elixir e enviado ao Python, onde é interpretado como um \textit{array} da biblioteca NumPy \citep{numpy2024}. Quando o tensor já utiliza o \texttt{Nx.BinaryBackend}, \texttt{Nx.to\_binary/2} obtém o binário mantido pelo próprio \textit{backend}; para dados residentes em outro dispositivo, a obtenção dessa representação pode exigir uma cópia adicional. A função \texttt{numpy.frombuffer()} cria um \textit{ndarray} que referencia um \textit{buffer} compatível, associando-lhe tipo numérico e dimensões sem copiar seu conteúdo.
+
+A entrada desses dados no interpretador, entretanto, envolve uma cópia. Ao receber um binário Erlang como argumento de uma chamada Pythonx, a camada de interoperabilidade utiliza a função \texttt{PyBytes\_FromStringAndSize} da Python/C \gls{API} \citep{python2024} para alocar um novo objeto \texttt{bytes} e copiar para ele o conteúdo do binário (\autoref{code:pybytes}). Em seguida, \texttt{numpy.frombuffer()} pode criar uma visão desse objeto sem nova cópia. Se a aplicação precisar de um \textit{array} independente e mutável, uma chamada explícita a \texttt{copy()} realizará outra cópia; essa é a estratégia adotada pelo caminho baseado em \texttt{Nx.BinaryBackend} da biblioteca desenvolvida.
+
+\begin{sourcecode}[htb]
+\caption{Assinatura da função PyBytes\_FromStringAndSize da Python/C API}
+\label{code:pybytes}
+\codigofonte{C}{pybytes_fromstringandsize.c}
+\fonte{\citeonline{python2024}}
+\end{sourcecode}
+
+Na direção inversa, de Python para Elixir, a operação \texttt{ndarray.tobytes()} aloca um objeto \texttt{bytes} e copia para ele o conteúdo do \textit{array}. A decodificação desse objeto pelo Pythonx, por sua vez, não acrescenta outra cópia. A biblioteca obtém o endereço interno do objeto e cria um binário Erlang por meio de \texttt{enif\_make\_resource\_binary}, da interface de \glspl{NIF} do Erlang \citep{erlnif2024} (\autoref{code:enif-resource}). O conteúdo do binário aponta para o \textit{buffer} já alocado pelo CPython, enquanto um recurso associado mantém o objeto Python válido durante o uso pelo lado Elixir. Assim, a travessia da fronteira Pythonx é livre de cópia nesse sentido, embora a conversão prévia do \textit{ndarray} para \texttt{bytes} não seja.
+
+\begin{sourcecode}[htb]
+\caption{Assinatura da função enif\_make\_resource\_binary da API de NIFs do Erlang}
+\label{code:enif-resource}
+\codigofonte{C}{enif_make_resource_binary.c}
+\fonte{\citeonline{erlnif2024}}
+\end{sourcecode}
+
+O acesso direto por ponteiro, descrito na \autoref{sec:exla-memoria}, evita a transferência do conteúdo do tensor. Em vez de enviar um binário, o endereço do \textit{DeviceBuffer} \gls{EXLA} e seu tamanho são passados ao Python como metadados. A biblioteca \texttt{ctypes} constrói uma visão da região indicada, posteriormente interpretada como um \textit{array} NumPy por \texttt{numpy.frombuffer()}, conforme ilustrado no \autoref{code:ctypes-numpy}. Como os dois ambientes referenciam a mesma alocação, leituras e escritas realizadas em Python tornam-se visíveis no tensor \gls{EXLA} sem cópia dos dados. Essa propriedade depende de o \textit{array} ser uma visão, e não o resultado de operações como \texttt{copy()} ou \texttt{tobytes()}, e de o proprietário da memória permanecer vivo durante todo o acesso.
+
+\begin{sourcecode}[htb]
+\caption{Leitura sem cópia de um DeviceBuffer EXLA via ctypes e numpy.frombuffer}
+\label{code:ctypes-numpy}
+\codigofonte{Python}{ctypes_numpy_frombuffer.py}
+\fonte{O autor}
+\end{sourcecode}
+
+Por fim, a cobertura de tipos numéricos entre \gls{Nx} e NumPy não é uniforme. Tipos como \textit{bfloat16}, as variantes de \textit{float8} e os inteiros de largura inferior a um \textit{byte} (\textit{int4}, \textit{uint4}, \textit{int2} e \textit{uint2}) não são definidos nativamente pelo NumPy. O pacote \texttt{ml\_dtypes} \citep{mldtypes2024} registra representações adicionais compatíveis com sua \gls{API}. Há, contudo, uma diferença de disposição para os inteiros menores que um \textit{byte}: o \gls{EXLA} armazena múltiplos elementos em cada \textit{byte}, enquanto o \texttt{ml\_dtypes} utiliza um \textit{byte} por elemento. A biblioteca \textit{nx\_py} contorna essa incompatibilidade ampliando esses valores para inteiros de oito \textit{bits} antes da exposição ao Python. Essa conversão exige nova alocação e, portanto, tais tipos não preservam a propriedade de zero-copy. A estratégia e suas consequências para o tipo retornado são retomadas no capítulo de desenvolvimento.
+
+Os mecanismos apresentados evidenciam que zero-copy não é uma propriedade abstrata de uma chamada entre Elixir e Python, mas do caminho completo percorrido pelos dados. Ela requer uma representação de memória compatível, a ausência de operações que materializem cópias e a preservação do tempo de vida da alocação compartilhada. Esses requisitos orientam a arquitetura da biblioteca descrita no capítulo seguinte.

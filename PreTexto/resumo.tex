@@ -1,0 +1,9 @@
+%%%% RESUMO
+%%
+%% Apresentação concisa dos pontos relevantes de um texto, fornecendo uma visão rápida e clara do conteúdo e das conclusões do
+%% trabalho.
+
+\begin{resumoutfpr}%% Ambiente resumoutfpr
+Aplicações modernas de computação numérica e aprendizado de máquina exigem tanto bibliotecas maduras quanto execução concorrente, confiável e tolerante a falhas. O ecossistema Python atende ao primeiro requisito por meio de ferramentas consolidadas, enquanto o ecossistema Erlang/Elixir se destaca pelas propriedades arquiteturais da BEAM VM, que favorecem sistemas distribuídos e altamente disponíveis. Apesar de iniciativas como o Numerical Elixir, a diferença de maturidade ainda limita a adoção do Elixir em cenários que dependem dessas ferramentas. Nesse contexto, este trabalho investiga e desenvolve mecanismos de interoperabilidade entre Numerical Elixir e Python, resultando na biblioteca nx\_py, que possibilita a transferência de tensores entre os dois ambientes com e sem cópia de memória. A abordagem parte da análise dos mecanismos de comunicação entre Elixir e linguagens externas, com ênfase em Native Implemented Functions e na biblioteca Pythonx, que permite embutir um interpretador CPython na BEAM VM. A nx\_py permite que um tensor Nx seja utilizado diretamente em código Python e decide sozinha como transferir os dados: com cópia, quando o tensor está armazenado no Nx.BinaryBackend, e sem cópia, quando está no EXLA, caso em que Elixir e Python passam a ler e escrever na mesma região de memória. A validação empírica, conduzida por meio de medições de uso de memória residente, confirma a eliminação de cópias no caminho zero-copy. Conclui-se que a interoperabilidade proposta amplia as capacidades do ecossistema Elixir nesse domínio, mantendo as propriedades de concorrência e robustez da BEAM VM.
+\end{resumoutfpr}
+

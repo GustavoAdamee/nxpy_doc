@@ -1,0 +1,34 @@
+%%%% CAPÍTULO 1 - INTRODUÇÃO
+
+\chapter{Introdução}\label{cap:introducao}
+
+Aplicações modernas de computação numérica e aprendizado de máquina, especialmente em ambientes de produção, frequentemente exigem dois conjuntos de requisitos: a disponibilidade de bibliotecas maduras para operações numéricas e a capacidade de execução concorrente, confiável e tolerante a falhas em sistemas distribuídos. Nesse contexto, torna-se relevante investigar mecanismos que permitam integrar ferramentas numéricas consolidadas a ambientes que priorizam confiabilidade e concorrência, reduzindo barreiras de adoção e ampliando possibilidades de uso.
+
+\section{Contextualização e motivação}\label{sec:contextualizacao}
+
+O ecossistema Python atende de forma consistente ao requisito de disponibilidade de bibliotecas maduras para computação numérica e aprendizado de máquina, devido ao amplo conjunto de ferramentas consolidadas \citep{harris2020, jax2024} e à forte adoção em ambientes acadêmicos e industriais. Em contrapartida, o ecossistema Erlang/Elixir se destaca por características arquiteturais voltadas à confiabilidade e ao paralelismo, suportadas pela \gls{BEAM} \citep{armstrong2010}, o que o torna atrativo para sistemas concorrentes, distribuídos e tolerantes a falhas.
+
+Nos últimos anos, iniciativas como o \gls{Nx}, de \citet{nx2024}, têm buscado reduzir a lacuna existente na computação numérica dentro do ambiente Elixir. Apesar desses avanços, a diferença de maturidade e de diversidade de bibliotecas ainda limita a adoção do Elixir em cenários que dependem diretamente de ferramentas já consolidadas no ecossistema Python, especialmente em aplicações de aprendizado de máquina.
+
+Assim, investigar mecanismos de interoperabilidade entre Elixir e Python torna-se relevante para permitir o reaproveitamento de bibliotecas numéricas e de aprendizado de máquina amplamente utilizadas, sem que aplicações Elixir precisem abrir mão das propriedades de concorrência e robustez oferecidas pela \gls{BEAM}.
+
+\section{Objetivos}\label{sec:objetivos}
+
+\subsection{Objetivo geral}\label{subsec:objetivo-geral}
+
+O objetivo geral deste trabalho é investigar e desenvolver mecanismos de interoperabilidade entre Numerical Elixir e Python, resultando na biblioteca \textit{nx\_py}, que permite que aplicações escritas em Elixir utilizem bibliotecas consolidadas do ecossistema Python de forma integrada, com suporte a transferência de tensores com e sem cópias de memória.
+
+\subsection{Objetivos específicos}\label{subsec:objetivos-especificos}
+
+Como objetivos específicos, este trabalho busca:
+
+\begin{enumerate}
+    \item Analisar os mecanismos de comunicação entre Elixir e linguagens externas, com ênfase em \glspl{NIF} \citep{erlnif2024} e na biblioteca Pythonx \citep{pythonx2024}, que permite a incorporação de um interpretador CPython na \gls{BEAM};
+    \item Projetar e implementar a biblioteca \textit{nx\_py} de forma que um tensor \gls{Nx} possa ser utilizado diretamente em código Python, cabendo à própria biblioteca decidir como transferir os dados, de acordo com o \textit{backend} em que o tensor está armazenado;
+    \item Implementar a transferência de tensores entre \gls{EXLA} e Python sem cópia de dados, de modo que os dois ambientes passem a ler e escrever na mesma região de memória;
+    \item Validar empiricamente os mecanismos de transferência por meio de medições de uso de memória residente do processo (\gls{RSS}), comparando abordagens baseadas em cópia e zero-copy.
+\end{enumerate}
+
+\section{Estrutura do documento}\label{sec:estrutura}
+
+Este documento está organizado em quatro capítulos. O primeiro capítulo apresenta a contextualização, a motivação e os objetivos do trabalho. O segundo capítulo aborda a fundamentação teórica, reunindo os conceitos e mecanismos técnicos necessários para compreender a interoperabilidade proposta. O terceiro capítulo descreve o desenvolvimento da biblioteca \textit{nx\_py}, incluindo sua arquitetura, os \textit{backends} implementados, a cobertura de tipos e a análise empírica dos mecanismos de transferência. Por fim, o quarto capítulo apresenta as conclusões e os trabalhos futuros.

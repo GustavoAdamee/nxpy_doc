@@ -1,0 +1,1 @@
+PyObject *PyBytes_FromStringAndSize(const char *v, Py_ssize_t len);
